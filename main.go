@@ -147,7 +147,7 @@ func main() {
 	httpProxyPtr := flag.String("httpProxy", "http://127.0.0.1:7890", "HTTP代理地址。")
 	httpsProxyPtr := flag.String("httpsProxy", "http://127.0.0.1:7890", "HTTPS代理地址。")
 	noProxyPtr := flag.String("noProxy", "localhost,127.0.0.1,.daocloud.io", "无代理设置。")
-	onProxy := flag.Int("onProxy", 3, "代理设置 0: 关闭，1: 开启")
+	onProxy := flag.Int("onProxy", -1, "代理设置 0: 关闭，1: 开启")
 
 	flag.Parse()
 
