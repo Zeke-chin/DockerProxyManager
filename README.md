@@ -134,3 +134,17 @@ noProxy: localhost
 }%                               
 ```
 
+3. 配置alias
+将以下内容写进你的`~/.bashrc`或`~/.zshrc`中
+
+```bash
+alias dpon="\
+dpm -httpProxy http://127.0.0.1:7890 \
+    -httpsProxy http://127.0.0.1:7890 \
+    -onProxy  1
+"
+alias dpoff="dpm -onProxy 0"
+```
+执行`source ~/.bashrc`或`source ~/.zshrc`即可
+
+然后你就可以使用`dpon`和`dpoff`来开启和关闭docker的代理了
