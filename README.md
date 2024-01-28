@@ -138,13 +138,16 @@ noProxy: localhost
 将以下内容写进你的`~/.bashrc`或`~/.zshrc`中
 
 ```bash
-alias dpon="\
-dpm -httpProxy http://127.0.0.1:7890 \
-    -httpsProxy http://127.0.0.1:7890 \
-    -onProxy  1
-"
-alias dpoff="dpm -onProxy 0"
+# Define the variable
+http_proxy="http://127.0.0.1:7890"
+https_proxy="http://127.0.0.1:7890"
+alias dpon="DPM -httpProxy $http_proxy -httpsProxy $http_proxy -onProxy 1"
+alias dpoff="DPM -onProxy 0"
 ```
 执行`source ~/.bashrc`或`source ~/.zshrc`即可
 
 然后你就可以使用`dpon`和`dpoff`来开启和关闭docker的代理了
+
+4. 备份文件夹
+每次更新配置文件`~/.docker/config.json`前 都会备份到`~/.docker/config_back`文件夹中，最多保留5个
+
