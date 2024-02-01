@@ -164,6 +164,13 @@ func main() {
 		return
 	}
 	userDockerConfigPath := filepath.Join(homeDir, ".docker/config.json")
+	// 判断文件是否存在, 如果不存在就创建空json文件
+	if _, err = os.Stat(userDockerConfigPath); os.IsNotExist(err) {
+		if err = WriteToFile(userDockerConfigPath, map[string]interface{}{}); err != nil {
+			fmt.Println(err)
+			return
+		}
+	}
 	backupDir := filepath.Join(homeDir, ".docker/config_back")
 
 	// 使用提供的标记创建新的代理
