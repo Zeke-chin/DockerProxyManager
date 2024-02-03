@@ -90,9 +90,6 @@ func (d *DockerConfig) ReadConfigFile() (map[string]interface{}, error) {
 
 // UpdateConfig 更新Docker配置文件
 func (d *DockerConfig) UpdateConfig(onProxy *int) error {
-	if err := BackupFile(d.ConfigPath, d.BackupDir, 5); err != nil {
-		return errors.New(err.Error())
-	}
 	if *onProxy == 1 {
 		d.MapConfig["proxies"] = d.Proxy
 	} else if *onProxy == 0 {
@@ -102,14 +99,17 @@ func (d *DockerConfig) UpdateConfig(onProxy *int) error {
 }
 
 // WriteConfigFile 写入Docker配置文件
-// WriteConfigFile 写入Docker配置文件
 func (d *DockerConfig) WriteConfigFile() error {
+	// 备份文件
+	if err := BackupFile(d.ConfigPath, d.BackupDir, 5); err != nil {
+		return errors.New(err.Error())
+	}
 	jsonData := Map2SJson(d.MapConfig)
 	fmt.Printf("修改后\n%s\n", jsonData)
 
 	file, err := os.OpenFile(d.ConfigPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		return errors.New(err.Error())
 	}
 	defer file.Close()
 
