@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/pkg/errors"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -24,69 +25,112 @@ type Proxy struct {
 
 // NewProxy 通过给定的设置创建一个新的Proxy。
 func NewProxy(httpProxy, httpsProxy, noProxy string) *Proxy {
-	return &Proxy{
-		Proxies: struct {
-			Default struct {
-				HttpProxy  string `json:"httpProxy"`
-				HttpsProxy string `json:"httpsProxy"`
-				NoProxy    string `json:"noProxy"`
-			} `json:"default"`
-		}{
-			Default: struct {
-				HttpProxy  string `json:"httpProxy"`
-				HttpsProxy string `json:"httpsProxy"`
-				NoProxy    string `json:"noProxy"`
-			}{
-				HttpProxy:  httpProxy,
-				HttpsProxy: httpsProxy,
-				NoProxy:    noProxy,
-			},
-		},
-	}
+	proxy := &Proxy{}
+	proxy.Proxies.Default.HttpProxy = httpProxy
+	proxy.Proxies.Default.HttpsProxy = httpsProxy
+	proxy.Proxies.Default.NoProxy = noProxy
+	return proxy
 }
 
-// ReadJsonFile 读取文件中的JSON数据，并输出格式化后的JSON。
-func ReadJsonFile(filePath string) ([]byte, error) {
-	fileData, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("读取文件错误: %v", err)
-	}
-
-	var obj interface{}
-	if err := json.Unmarshal(fileData, &obj); err != nil {
-		return nil, fmt.Errorf("解码JSON错误: %v", err)
-	}
-
-	formattedJSON, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("编排JSON错误: %v", err)
-	}
-
-	return formattedJSON, nil
+type DockerConfig struct {
+	Proxy      Proxy
+	MapConfig  map[string]interface{}
+	ConfigPath string
+	BackupDir  string
 }
 
-// WriteToFile 将JSON数据写入文件。
-func WriteToFile(filePath string, data interface{}) error {
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+func NewDockerConfig(userProxy *Proxy) (*DockerConfig, error) {
+	dockerConfig := &DockerConfig{}
+	var err error
+
+	dockerConfig.Proxy = *userProxy
+	if err = dockerConfig.InitPath(); err != nil {
+		return dockerConfig, err
+	}
+	if dockerConfig.MapConfig, err = dockerConfig.ReadConfigFile(); err != nil {
+		return dockerConfig, err
+	}
+
+	return dockerConfig, nil
+}
+
+// InitPath 获取用户的家目录并准备文件路径
+func (d *DockerConfig) InitPath() error {
+	// 获取用户的家目录并准备文件路径
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("打开文件错误: %v", err)
+		return errors.New(err.Error())
+	}
+	d.ConfigPath = filepath.Join(homeDir, ".docker/config.json")
+	d.BackupDir = filepath.Join(homeDir, ".docker/config_back")
+	return nil
+}
+
+// ReadConfigFile 读取Docker配置文件
+func (d *DockerConfig) ReadConfigFile() (map[string]interface{}, error) {
+	var configData map[string]interface{}
+	fileData, err := ioutil.ReadFile(d.ConfigPath)
+	if err != nil {
+		if _, err = os.Stat(d.ConfigPath); os.IsNotExist(err) {
+			// 写入一个空json文件
+			fileData = []byte("{}")
+			if err = ioutil.WriteFile(d.ConfigPath, fileData, 0644); err != nil {
+				return configData, errors.New(err.Error())
+			}
+		} else {
+			return configData, errors.New(err.Error())
+		}
+	}
+	if err = json.Unmarshal(fileData, &configData); err != nil {
+		return configData, errors.New(err.Error())
+	}
+	fmt.Printf("原始内容\n%s\n", string(fileData))
+	return configData, nil
+}
+
+// UpdateConfig 更新Docker配置文件
+func (d *DockerConfig) UpdateConfig(onProxy *int) error {
+	if err := BackupFile(d.ConfigPath, d.BackupDir, 5); err != nil {
+		return errors.New(err.Error())
+	}
+	if *onProxy == 1 {
+		d.MapConfig["proxies"] = d.Proxy
+	} else if *onProxy == 0 {
+		delete(d.MapConfig, "proxies")
+	}
+	return nil
+}
+
+// WriteConfigFile 写入Docker配置文件
+// WriteConfigFile 写入Docker配置文件
+func (d *DockerConfig) WriteConfigFile() error {
+	jsonData := Map2SJson(d.MapConfig)
+	fmt.Printf("修改后\n%s\n", jsonData)
+
+	file, err := os.OpenFile(d.ConfigPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
 	}
 	defer file.Close()
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "    ")
-	if err := encoder.Encode(data); err != nil {
-		return fmt.Errorf("将JSON写入文件错误: %v", err)
+	// 直接写入JSON字符串到文件中
+	if _, err = file.WriteString(jsonData); err != nil {
+		return errors.New(err.Error())
 	}
-
 	return nil
+}
+
+// Map2SJson 将map转换为格式化的JSON字符串
+func Map2SJson(m map[string]interface{}) string {
+	s, _ := json.MarshalIndent(m, "", "    ")
+	return string(s)
 }
 
 // BackupFile 创建文件的备份，并管理备份的保留。
 func BackupFile(srcFile string, backupDir string, maxBackups int) error {
 	// 确保备份目录存在
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return err
+		return errors.New(err.Error())
 	}
 
 	baseName := filepath.Base(srcFile)
@@ -94,13 +138,13 @@ func BackupFile(srcFile string, backupDir string, maxBackups int) error {
 	backupFile := filepath.Join(backupDir, baseName+"."+time.Now().Format("2006-01-02 15:04:05"))
 	err := CopyFile(srcFile, backupFile)
 	if err != nil {
-		return fmt.Errorf("复制文件到备份出错: %v", err)
+		return errors.New(err.Error())
 	}
 
 	// 列出文件并仅保留最新的'maxBackups'个文件
 	files, err := ioutil.ReadDir(backupDir)
 	if err != nil {
-		return fmt.Errorf("读取备份目录出错: %v", err)
+		return errors.New(err.Error())
 	}
 
 	// 筛选并收集备份文件
@@ -123,9 +167,9 @@ func BackupFile(srcFile string, backupDir string, maxBackups int) error {
 		})
 
 		for _, f := range backupFiles[:len(backupFiles)-maxBackups] {
-			err := os.Remove(filepath.Join(backupDir, f))
+			err = os.Remove(filepath.Join(backupDir, f))
 			if err != nil {
-				return fmt.Errorf("删除旧备份文件失败: %v", err)
+				return errors.New(err.Error())
 			}
 		}
 	}
@@ -137,7 +181,7 @@ func BackupFile(srcFile string, backupDir string, maxBackups int) error {
 func CopyFile(src, dest string) error {
 	input, err := ioutil.ReadFile(src)
 	if err != nil {
-		return err
+		return errors.New(err.Error())
 	}
 	return ioutil.WriteFile(dest, input, 0644)
 }
@@ -148,7 +192,6 @@ func main() {
 	httpsProxyPtr := flag.String("httpsProxy", "http://127.0.0.1:7890", "HTTPS代理地址。")
 	noProxyPtr := flag.String("noProxy", "localhost,127.0.0.1,.daocloud.io", "无代理设置。")
 	onProxy := flag.Int("onProxy", -1, "代理设置 0: 关闭，1: 开启")
-
 	flag.Parse()
 
 	// 验证'onProxy'标记
@@ -156,67 +199,26 @@ func main() {
 		fmt.Println("onProxy 参数错误, 请使用 0 或 1")
 		return
 	}
-
-	// 获取用户的家目录并准备文件路径
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Println("获取家目录失败:", err)
-		return
-	}
-	userDockerConfigPath := filepath.Join(homeDir, ".docker/config.json")
-	// 判断文件是否存在, 如果不存在就创建空json文件
-	if _, err = os.Stat(userDockerConfigPath); os.IsNotExist(err) {
-		if err = WriteToFile(userDockerConfigPath, map[string]interface{}{}); err != nil {
-			fmt.Println(err)
-			return
-		}
-	}
-	backupDir := filepath.Join(homeDir, ".docker/config_back")
-
-	// 使用提供的标记创建新的代理
 	uProxy := NewProxy(*httpProxyPtr, *httpsProxyPtr, *noProxyPtr)
+	// 使用提供的标记创建新的代理
 	isOpen := map[int]string{0: "关闭", 1: "开启"}[*onProxy]
 	fmt.Printf("配置如下:\nhttpProxy: %s\nhttpsProxy: %s\nnoProxy: %s\n代理开关: %s\n\n", uProxy.Proxies.Default.HttpProxy, uProxy.Proxies.Default.HttpsProxy, uProxy.Proxies.Default.NoProxy, isOpen)
 
-	// 在修改Docker配置之前执行备份过程
-	if err := BackupFile(userDockerConfigPath, backupDir, 5); err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	// 检索当前的Docker配置
-	currentConfig, err := ReadJsonFile(userDockerConfigPath)
+	dockerConfig, err := NewDockerConfig(uProxy)
 	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Printf("%v 原始内容\n%s", userDockerConfigPath, string(currentConfig))
-
-	// 从文件解码当前配置
-	var configData map[string]interface{}
-	if err := json.Unmarshal(currentConfig, &configData); err != nil {
-		fmt.Println("解码JSON错误:", err)
+		fmt.Printf("error NewDockerConfig: %+v", err)
 		return
 	}
 
-	// 根据'onProxy'标记启用或禁用代理
-	if *onProxy == 1 {
-		configData["proxies"] = uProxy.Proxies
-	} else if *onProxy == 0 {
-		delete(configData, "proxies")
-	}
-
-	// 将修改后的配置写回文件
-	if err := WriteToFile(userDockerConfigPath, configData); err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	// 检索并打印修改后的配置
-	modifiedConfig, err := ReadJsonFile(userDockerConfigPath)
+	err = dockerConfig.UpdateConfig(onProxy)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("error UpdateConfig: %+v", err)
 		return
 	}
-	fmt.Printf("\n\n%v 修改后内容\n%s", userDockerConfigPath, modifiedConfig)
+
+	err = dockerConfig.WriteConfigFile()
+	if err != nil {
+		fmt.Printf("error WriteConfigFile: %+v", err)
+		return
+	}
 }
